@@ -1,0 +1,2 @@
+# yat-r-m
+yatırım
