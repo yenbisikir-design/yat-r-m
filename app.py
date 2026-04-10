@@ -13,7 +13,7 @@ ADMIN_ID = 7627804591
 # Banka -> Grup ID eşleştirmesi
 # Grup ID'lerini /id komutuyla öğrenince buraya ekle
 BANKA_GRUPLARI = {
-    "enpara": "-4949276017",      # Ece Aydın - Enpara grubu
+    "enpara": "-4958699415",      # Ece Aydın - Enpara grubu
     "ziraat": "-4949276017",      # Emre Tekin - Ziraat grubu (şimdilik aynı, değiştir)
 }
 VARSAYILAN_GRUP = "-4949276017"  # Eşleşme yoksa buraya gider
