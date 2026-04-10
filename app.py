@@ -6,44 +6,38 @@ import hashlib
 import json
 import time
 from threading import Timer
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
 TELEGRAM_TOKEN = "8414450173:AAGpMe7TBP4xQiL_YjfB2_WboKnkFN4t3AI"
-ADMIN_ID = 7627804591  # Baş admin
+ADMIN_ID = 7627804591
+GUVENLIK_ANAHTARI = "redkit2026"
 
-# Banka -> Grup ID eşleştirmesi
 BANKA_GRUPLARI = {
     "enpara": "-4949276017",
     "ziraat": "-4949276017",
 }
 VARSAYILAN_GRUP = "-4949276017"
 
-# Admin listesi {telegram_id: username}
-adminler = {ADMIN_ID: "baş admin"}
-
+adminler = {ADMIN_ID: "bas admin"}
 mod = {"aktif": "oto"}
 sira = {"num": 1}
 islemler = {}
 islem_sayac = {"num": 1}
 duplicate_set = set()
-
-# Son ödeme takibi {isim: timestamp}
 son_odeme = {}
-LIMIT_SURE = 600  # 10 dakika (saniye)
-
-# Günlük istatistik {grup_id: [{gonderenisim, tutar_float}]}
 gunluk = {}
+LIMIT_SURE = 600
 
 BANKA_KELIMELERI = {
     "enpara": ["enpara", "qnb"],
-    "ziraat": ["ziraat", "havale aktarılmıştır"],
+    "ziraat": ["ziraat", "havale aktarilmistir", "havale aktarılmıştır"],
     "garanti": ["garanti", "bbva"],
-    "vakif": ["vakıfbank", "vakif"],
-    "yapi_kredi": ["yapı kredi", "yapi kredi"],
+    "vakif": ["vakifbank", "vakif", "vakıfbank"],
+    "yapi_kredi": ["yapi kredi", "yapı kredi"],
     "akbank": ["akbank"],
-    "isbankasi": ["iş bankası", "isbank"],
+    "isbankasi": ["is bankasi", "iş bankası", "isbank"],
 }
 
 def banka_tespit(metin):
@@ -57,8 +51,10 @@ def banka_tespit(metin):
 def parse_bildirim(metin):
     isim_match = re.search(r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-züşğıöç\s]{2,}?)\s+tarafından', metin)
     tutar_match = re.search(r'([\d.,]+)\s*TL', metin)
-    gonderenisim = isim_match.group(1).strip() if isim_match else "Bilinmiyor"
-    tutar_str = tutar_match.group(1).strip() if tutar_match else "0"
+    gonderenisim = isim_match.group(1).strip() if isim_match else None
+    tutar_str = tutar_match.group(1).strip() if tutar_match else None
+    if not gonderenisim or not tutar_str:
+        return None, None, None
     tutar_float = float(tutar_str.replace('.', '').replace(',', '.'))
     return gonderenisim, tutar_str, tutar_float
 
@@ -76,10 +72,8 @@ def telegram_gonder(chat_id, mesaj, butonlar=None):
         print(f"Telegram hata: {e}")
 
 def gruba_gonder(s, gonderenisim, tutar_str, grup_id):
-    # Gruba SADECE ödeme mesajı gider, başka hiçbir şey değil
     mesaj = f"{s}. {gonderenisim} {tutar_str}"
     telegram_gonder(grup_id, mesaj)
-    # İstatistiğe ekle
     if grup_id not in gunluk:
         gunluk[grup_id] = []
     try:
@@ -89,37 +83,31 @@ def gruba_gonder(s, gonderenisim, tutar_str, grup_id):
     gunluk[grup_id].append({"isim": gonderenisim, "tutar": tutar_float})
 
 def onay_sor(islem_id, gonderenisim, tutar_str, banka, zorunlu_manuel=False):
-    etiket = "⚠️" if not zorunlu_manuel else "🔄"
+    etiket = "🔄" if zorunlu_manuel else "⚠️"
     ekstra = "\n<i>Aynı kişiden tekrar ödeme - manuel onay zorunlu</i>" if zorunlu_manuel else ""
     mesaj = f"{etiket} <b>Onay Bekliyor</b>{ekstra}\n\n🏦 {banka.upper()}\n👤 {gonderenisim}\n💰 {tutar_str} TL\n\nOnaylıyor musun?"
     butonlar = [[
         {"text": "✅ Onayla", "callback_data": f"onayla_{islem_id}"},
         {"text": "❌ Reddet", "callback_data": f"reddet_{islem_id}"}
     ]]
-    # Tüm adminlere gönder
     for admin_id in adminler:
         telegram_gonder(admin_id, mesaj, butonlar)
 
 def gunluk_ozet_gonder():
-    for grup_id, islemler_listesi in gunluk.items():
-        if not islemler_listesi:
-            continue
-        toplam = sum(i["tutar"] for i in islemler_listesi)
-        sayi = len(islemler_listesi)
-        mesaj = f"📊 <b>Günlük Özet</b>\n\nToplam işlem: {sayi}\nToplam tutar: {toplam:,.2f} TL"
-        # Sadece baş admine gönder
-        telegram_gonder(ADMIN_ID, mesaj)
-    # Günlük sıfırla
-    gunluk.clear()
-    # Ertesi gün için zamanlayıcı kur
+    if gunluk:
+        for grup_id, liste in gunluk.items():
+            if not liste:
+                continue
+            toplam = sum(i["tutar"] for i in liste)
+            sayi = len(liste)
+            mesaj = f"📊 <b>Günlük Özet</b>\n\nToplam işlem: {sayi}\nToplam tutar: {toplam:,.2f} TL"
+            telegram_gonder(ADMIN_ID, mesaj)
+        gunluk.clear()
     zamanla_gunluk_ozet()
 
 def zamanla_gunluk_ozet():
     now = datetime.now()
-    # Gece 00:00'a kaç saniye kaldı
-    yarin_gece = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    from datetime import timedelta
-    yarin_gece = yarin_gece + timedelta(days=1)
+    yarin_gece = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     kalan = (yarin_gece - now).total_seconds()
     t = Timer(kalan, gunluk_ozet_gonder)
     t.daemon = True
@@ -127,13 +115,18 @@ def zamanla_gunluk_ozet():
 
 @app.route('/bildirim', methods=['POST', 'GET'])
 def bildirim():
+    # Güvenlik anahtarı kontrolü
+    anahtar = request.args.get('key', '')
+    if anahtar != GUVENLIK_ANAHTARI:
+        return jsonify({"hata": "Yetkisiz"}), 403
+
     if request.method == 'POST':
         metin = request.json.get('metin', '') if request.is_json else request.form.get('metin', '')
     else:
         metin = request.args.get('metin', '')
 
-    if not metin:
-        return jsonify({"hata": "Metin bos"}), 400
+    if not metin or len(metin.strip()) < 10:
+        return jsonify({"hata": "Gecersiz metin"}), 400
 
     h = hash_uret(metin)
     if h in duplicate_set:
@@ -141,11 +134,15 @@ def bildirim():
     duplicate_set.add(h)
 
     gonderenisim, tutar_str, tutar_float = parse_bildirim(metin)
+
+    # Parse başarısız olduysa işleme
+    if not gonderenisim or not tutar_str:
+        return jsonify({"hata": "Bildirim parse edilemedi"}), 400
+
     banka = banka_tespit(metin)
     grup_id = BANKA_GRUPLARI.get(banka, VARSAYILAN_GRUP)
     aktif_mod = mod["aktif"]
 
-    # Limit koruması - aynı kişiden 10dk içinde tekrar ödeme
     simdi = time.time()
     zorunlu_manuel = False
     if gonderenisim in son_odeme:
@@ -188,16 +185,14 @@ def webhook():
             chat_id = msg['chat']['id']
             text = msg.get('text', '')
             chat_type = msg['chat']['type']
-            username = msg['from'].get('username', str(from_id))
 
-            # /id komutu her yerden çalışır
             if text == '/id':
                 telegram_gonder(chat_id, f"Chat ID: <b>{chat_id}</b>")
                 return "ok"
 
-            # Diğer komutlar sadece admin özel mesajından
             if chat_type != 'private':
                 return "ok"
+
             if from_id not in adminler:
                 telegram_gonder(chat_id, "⛔ Bu bota erişim izniniz yok.")
                 return "ok"
@@ -205,35 +200,40 @@ def webhook():
             if text == '/oto':
                 mod["aktif"] = "oto"
                 telegram_gonder(chat_id, "✅ <b>OTO mod aktif</b>\n100 TL üzeri direkt gider\n100 TL ve altı onay bekler.")
-
             elif text == '/manuel':
                 mod["aktif"] = "manuel"
                 telegram_gonder(chat_id, "✅ <b>MANUEL mod aktif</b>\nHer yatırım onayını bekler.")
-
             elif text == '/mod':
                 telegram_gonder(chat_id, f"Aktif mod: <b>{mod['aktif'].upper()}</b>")
-
+            elif text == '/toplam':
+                if not gunluk:
+                    telegram_gonder(chat_id, "Bugün henüz işlem yok.")
+                else:
+                    yanit = "<b>Bugünkü Özetler:</b>\n"
+                    for gid, liste in gunluk.items():
+                        toplam = sum(i["tutar"] for i in liste)
+                        yanit += f"\nGrup {gid}:\n{len(liste)} işlem — {toplam:,.2f} TL"
+                    telegram_gonder(chat_id, yanit)
+            elif text == '/adminler':
+                if from_id != ADMIN_ID:
+                    return "ok"
+                liste = "\n".join([f"• {v} ({k})" for k, v in adminler.items()])
+                telegram_gonder(chat_id, f"<b>Admin Listesi:</b>\n{liste}")
             elif text.startswith('/ytekle'):
-                # Sadece baş admin ekleyebilir
                 if from_id != ADMIN_ID:
                     telegram_gonder(chat_id, "⛔ Sadece baş admin yönetici ekleyebilir.")
                     return "ok"
                 parca = text.split()
                 if len(parca) < 2:
-                    telegram_gonder(chat_id, "Kullanım: /ytekle 123456789\nveya: /ytekle @kullaniciadi")
-                    return "ok"
-                hedef = parca[1]
-                if hedef.startswith('@'):
-                    telegram_gonder(chat_id, "⚠️ Kullanıcı adıyla ekleme için o kişinin bota önce mesaj atması gerekir. ID ile ekle.")
+                    telegram_gonder(chat_id, "Kullanım: /ytekle 123456789")
                     return "ok"
                 try:
-                    hedef_id = int(hedef)
-                    adminler[hedef_id] = hedef
-                    telegram_gonder(chat_id, f"✅ <b>{hedef}</b> admin olarak eklendi.")
+                    hedef_id = int(parca[1])
+                    adminler[hedef_id] = str(hedef_id)
+                    telegram_gonder(chat_id, f"✅ <b>{hedef_id}</b> admin olarak eklendi.")
                     telegram_gonder(hedef_id, "✅ Artık bu bota admin olarak erişebilirsiniz.")
                 except:
                     telegram_gonder(chat_id, "⚠️ Geçersiz ID.")
-
             elif text.startswith('/ysil'):
                 if from_id != ADMIN_ID:
                     telegram_gonder(chat_id, "⛔ Sadece baş admin yönetici silebilir.")
@@ -249,27 +249,11 @@ def webhook():
                         return "ok"
                     if hedef_id in adminler:
                         del adminler[hedef_id]
-                        telegram_gonder(chat_id, f"✅ Admin silindi.")
+                        telegram_gonder(chat_id, "✅ Admin silindi.")
                     else:
                         telegram_gonder(chat_id, "⚠️ Bu ID adminler arasında yok.")
                 except:
                     telegram_gonder(chat_id, "⚠️ Geçersiz ID.")
-
-            elif text == '/adminler':
-                if from_id != ADMIN_ID:
-                    return "ok"
-                liste = "\n".join([f"• {v} ({k})" for k, v in adminler.items()])
-                telegram_gonder(chat_id, f"<b>Admin Listesi:</b>\n{liste}")
-
-            elif text == '/toplam':
-                if not gunluk:
-                    telegram_gonder(chat_id, "Bugün henüz işlem yok.")
-                else:
-                    yanit = "<b>Bugünkü Özetler:</b>\n"
-                    for gid, liste in gunluk.items():
-                        toplam = sum(i["tutar"] for i in liste)
-                        yanit += f"\nGrup {gid}:\n{len(liste)} işlem — {toplam:,.2f} TL"
-                    telegram_gonder(chat_id, yanit)
 
         if 'callback_query' in data:
             cb = data['callback_query']
@@ -294,9 +278,7 @@ def webhook():
                     sira["num"] += 1
                     gruba_gonder(s, islem["gonderenisim"], islem["tutar_str"], islem["grup_id"])
                     del islemler[islem_id]
-                    # Sadece onaylayan admine bildir
                     telegram_gonder(from_id, "✅ Onaylandı ve gruba gönderildi.")
-                    # Diğer adminlere bildir
                     for admin_id in adminler:
                         if admin_id != from_id:
                             telegram_gonder(admin_id, f"✅ İşlem onaylandı: {islem['gonderenisim']} {islem['tutar_str']}")
@@ -324,7 +306,6 @@ def webhook():
 def index():
     return "Ziraat Bot calisiyor"
 
-# Günlük özet zamanlayıcısını başlat
 zamanla_gunluk_ozet()
 
 if __name__ == '__main__':
