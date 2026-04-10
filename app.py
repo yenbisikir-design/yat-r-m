@@ -153,6 +153,9 @@ def webhook():
         print(f"Webhook hata: {e}")
 
     return "ok"
+    
+elif text == '/id':
+    telegram_gonder(chat_id, f"Chat ID: <b>{chat_id}</b>")
 
 @app.route('/')
 def index():
