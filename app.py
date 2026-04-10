@@ -46,7 +46,7 @@ def banka_tespit(metin):
     return None
 
 def parse_bildirim(metin):
-    isim_match = re.search(r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-züşğıöç\s]{2,}?)\s+tarafından', metin)
+    isim_match = re.search(r'Sayın\s+([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-züşğıöç\s]+?)(?:,|\s+\d)', metin)
     tutar_match = re.search(r'([\d.,]+)\s*TL', metin)
     gonderenisim = isim_match.group(1).strip() if isim_match else None
     tutar_str = tutar_match.group(1).strip() if tutar_match else None
