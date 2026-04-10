@@ -14,7 +14,7 @@ TELEGRAM_TOKEN = "8414450173:AAGpMe7TBP4xQiL_YjfB2_WboKnkFN4t3AI"
 ADMIN_ID = 7627804591
 GUVENLIK_ANAHTARI = "redkit2026"
 
-# Eşleştirmeler: {"banka|ISIM": "grup_id"}
+# Eşleştirmeler: {"ISIM": "grup_id"}
 eslestirmeler = {}
 
 adminler = {ADMIN_ID: "bas admin"}
@@ -27,24 +27,6 @@ son_odeme = {}
 gunluk = {}
 LIMIT_SURE = 600
 
-BANKA_KELIMELERI = {
-    "enpara": ["enpara", "qnb"],
-    "ziraat": ["ziraat", "havale aktarılmıştır"],
-    "garanti": ["garanti", "bbva"],
-    "vakif": ["vakıfbank", "vakif"],
-    "yapi_kredi": ["yapı kredi", "yapi kredi"],
-    "akbank": ["akbank"],
-    "isbankasi": ["iş bankası", "isbank"],
-}
-
-def banka_tespit(metin):
-    metin_lower = metin.lower()
-    for banka, kelimeler in BANKA_KELIMELERI.items():
-        for k in kelimeler:
-            if k in metin_lower:
-                return banka
-    return None
-
 def parse_bildirim(metin):
     isim_match = re.search(r'Sayın\s+([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-züşğıöç\s]+?)(?:,|\s+\d)', metin)
     tutar_match = re.search(r'([\d.,]+)\s*TL', metin)
@@ -55,11 +37,10 @@ def parse_bildirim(metin):
     tutar_float = float(tutar_str.replace('.', '').replace(',', '.'))
     return gonderenisim, tutar_str, tutar_float
 
-def grup_bul(banka, gonderenisim):
-    if not banka or not gonderenisim:
+def grup_bul(gonderenisim):
+    if not gonderenisim:
         return None
-    anahtar = f"{banka}|{gonderenisim.upper()}"
-    return eslestirmeler.get(anahtar, None)
+    return eslestirmeler.get(gonderenisim.upper(), None)
 
 def hash_uret(metin):
     return hashlib.md5(metin.strip().encode()).hexdigest()
@@ -85,10 +66,10 @@ def gruba_gonder(s, gonderenisim, tutar_str, grup_id):
         tutar_float = 0
     gunluk[grup_id].append({"isim": gonderenisim, "tutar": tutar_float})
 
-def onay_sor(islem_id, gonderenisim, tutar_str, banka, grup_id, zorunlu_manuel=False):
+def onay_sor(islem_id, gonderenisim, tutar_str, grup_id, zorunlu_manuel=False):
     etiket = "🔄" if zorunlu_manuel else "⚠️"
     ekstra = "\n<i>Aynı kişiden tekrar ödeme - manuel onay zorunlu</i>" if zorunlu_manuel else ""
-    mesaj = f"{etiket} <b>Onay Bekliyor</b>{ekstra}\n\n🏦 {banka.upper()}\n👤 {gonderenisim}\n💰 {tutar_str} TL\n\nOnaylıyor musun?"
+    mesaj = f"{etiket} <b>Onay Bekliyor</b>{ekstra}\n\n👤 {gonderenisim}\n💰 {tutar_str} TL\n\nOnaylıyor musun?"
     butonlar = [[
         {"text": "✅ Onayla", "callback_data": f"onayla_{islem_id}"},
         {"text": "❌ Reddet", "callback_data": f"reddet_{islem_id}"}
@@ -139,10 +120,7 @@ def bildirim():
     if not gonderenisim or not tutar_str:
         return jsonify({"hata": "Parse edilemedi"}), 400
 
-    banka = banka_tespit(metin)
-    grup_id = grup_bul(banka, gonderenisim)
-
-    # Eşleşme yoksa sessizce yoksay
+    grup_id = grup_bul(gonderenisim)
     if not grup_id:
         return jsonify({"durum": "eslesmedi"}), 200
 
@@ -157,16 +135,16 @@ def bildirim():
     if zorunlu_manuel or aktif_mod == 'manuel':
         islem_id = islem_sayac["num"]
         islem_sayac["num"] += 1
-        islemler[islem_id] = {"gonderenisim": gonderenisim, "tutar_str": tutar_str, "grup_id": grup_id, "banka": banka}
-        onay_sor(islem_id, gonderenisim, tutar_str, banka, grup_id, zorunlu_manuel)
+        islemler[islem_id] = {"gonderenisim": gonderenisim, "tutar_str": tutar_str, "grup_id": grup_id}
+        onay_sor(islem_id, gonderenisim, tutar_str, grup_id, zorunlu_manuel)
         return jsonify({"durum": "onay_bekleniyor"})
 
     elif aktif_mod == 'oto':
         if tutar_float <= 100:
             islem_id = islem_sayac["num"]
             islem_sayac["num"] += 1
-            islemler[islem_id] = {"gonderenisim": gonderenisim, "tutar_str": tutar_str, "grup_id": grup_id, "banka": banka}
-            onay_sor(islem_id, gonderenisim, tutar_str, banka, grup_id)
+            islemler[islem_id] = {"gonderenisim": gonderenisim, "tutar_str": tutar_str, "grup_id": grup_id}
+            onay_sor(islem_id, gonderenisim, tutar_str, grup_id)
             return jsonify({"durum": "onay_bekleniyor"})
         else:
             s = sira["num"]
@@ -227,36 +205,31 @@ def webhook():
                     telegram_gonder(chat_id, "Henüz eşleştirme yok.")
                 else:
                     yanit = "<b>Eşleştirmeler:</b>\n\n"
-                    for k, v in eslestirmeler.items():
-                        banka, isim = k.split("|")
-                        yanit += f"🏦 {banka.upper()} | 👤 {isim}\n➡️ Grup: {v}\n\n"
+                    for isim, gid in eslestirmeler.items():
+                        yanit += f"👤 {isim}\n➡️ Grup: {gid}\n\n"
                     telegram_gonder(chat_id, yanit)
 
             elif text.startswith('/ekle'):
-                # /ekle ziraat EMRE TEKIN -1001234567890
-                parca = text.split()
-                if len(parca) < 4:
-                    telegram_gonder(chat_id, "Kullanım:\n/ekle ziraat EMRE TEKIN -1001234567890")
-                    return "ok"
-                banka = parca[1].lower()
-                grup_id = parca[-1]
-                isim = " ".join(parca[2:-1]).upper()
-                anahtar = f"{banka}|{isim}"
-                eslestirmeler[anahtar] = grup_id
-                telegram_gonder(chat_id, f"✅ Eklendi!\n🏦 {banka.upper()}\n👤 {isim}\n➡️ Grup: {grup_id}")
-
-            elif text.startswith('/sil'):
-                # /sil ziraat EMRE TEKIN
+                # /ekle EMRE TEKIN -1001234567890
                 parca = text.split()
                 if len(parca) < 3:
-                    telegram_gonder(chat_id, "Kullanım:\n/sil ziraat EMRE TEKIN")
+                    telegram_gonder(chat_id, "Kullanım:\n/ekle EMRE TEKIN -1001234567890")
                     return "ok"
-                banka = parca[1].lower()
-                isim = " ".join(parca[2:]).upper()
-                anahtar = f"{banka}|{isim}"
-                if anahtar in eslestirmeler:
-                    del eslestirmeler[anahtar]
-                    telegram_gonder(chat_id, f"✅ Silindi: {banka.upper()} | {isim}")
+                grup_id = parca[-1]
+                isim = " ".join(parca[1:-1]).upper()
+                eslestirmeler[isim] = grup_id
+                telegram_gonder(chat_id, f"✅ Eklendi!\n👤 {isim}\n➡️ Grup: {grup_id}")
+
+            elif text.startswith('/sil'):
+                # /sil EMRE TEKIN
+                parca = text.split()
+                if len(parca) < 2:
+                    telegram_gonder(chat_id, "Kullanım:\n/sil EMRE TEKIN")
+                    return "ok"
+                isim = " ".join(parca[1:]).upper()
+                if isim in eslestirmeler:
+                    del eslestirmeler[isim]
+                    telegram_gonder(chat_id, f"✅ Silindi: {isim}")
                 else:
                     telegram_gonder(chat_id, "⚠️ Böyle bir eşleştirme bulunamadı.")
 
@@ -312,8 +285,8 @@ def webhook():
 /mod - Aktif modu göster
 
 <b>Eşleştirme:</b>
-/ekle ziraat EMRE TEKIN -100123 - Ekle
-/sil ziraat EMRE TEKIN - Sil
+/ekle EMRE TEKIN -100123 - Ekle
+/sil EMRE TEKIN - Sil
 /listele - Listele
 
 <b>Admin:</b>
@@ -323,7 +296,9 @@ def webhook():
 
 <b>İstatistik:</b>
 /toplam - Bugünkü özet
-/id - Grup ID'si"""
+/id - Grup IDsini goster
+
+/yardim - Bu listeyi göster"""
                 telegram_gonder(chat_id, mesaj)
 
         if 'callback_query' in data:
