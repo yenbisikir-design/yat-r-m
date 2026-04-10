@@ -153,13 +153,13 @@ def webhook():
         print(f"Webhook hata: {e}")
 
     return "ok"
-    
-elif text == '/id':
-    telegram_gonder(chat_id, f"Chat ID: <b>{chat_id}</b>")
+
 
 @app.route('/')
 def index():
     return "Ziraat Bot calisiyor"
+    elif text == '/id':
+    telegram_gonder(chat_id, f"Chat ID: <b>{chat_id}</b>")
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
