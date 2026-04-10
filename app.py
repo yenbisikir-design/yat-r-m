@@ -8,14 +8,39 @@ import json
 app = Flask(__name__)
 
 TELEGRAM_TOKEN = "8414450173:AAGpMe7TBP4xQiL_YjfB2_WboKnkFN4t3AI"
-TELEGRAM_CHAT_ID = "-4949276017"
 ADMIN_ID = 7627804591
+
+# Banka -> Grup ID eşleştirmesi
+# Grup ID'lerini /id komutuyla öğrenince buraya ekle
+BANKA_GRUPLARI = {
+    "enpara": "-4949276017",      # Ece Aydın - Enpara grubu
+    "ziraat": "-4949276017",      # Emre Tekin - Ziraat grubu (şimdilik aynı, değiştir)
+}
+VARSAYILAN_GRUP = "-4949276017"  # Eşleşme yoksa buraya gider
 
 mod = {"aktif": "oto"}
 sira = {"num": 1}
 islemler = {}
 islem_sayac = {"num": 1}
 duplicate_set = set()
+
+BANKA_KELIMELERI = {
+    "enpara": ["enpara", "qnb"],
+    "ziraat": ["ziraat", "havale aktarılmıştır"],
+    "garanti": ["garanti", "bbva"],
+    "vakif": ["vakıfbank", "vakif"],
+    "yapi_kredi": ["yapı kredi", "yapi kredi"],
+    "akbank": ["akbank"],
+    "isbankasi": ["iş bankası", "isbank"],
+}
+
+def banka_tespit(metin):
+    metin_lower = metin.lower()
+    for banka, kelimeler in BANKA_KELIMELERI.items():
+        for k in kelimeler:
+            if k in metin_lower:
+                return banka
+    return "diger"
 
 def parse_bildirim(metin):
     isim_match = re.search(r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-züşğıöç\s]{2,}?)\s+tarafından', metin)
@@ -38,12 +63,13 @@ def telegram_gonder(chat_id, mesaj, butonlar=None):
     except Exception as e:
         print(f"Telegram hata: {e}")
 
-def gruba_gonder(s, gonderenisim, tutar_str):
+def gruba_gonder(s, gonderenisim, tutar_str, grup_id):
     mesaj = f"{s}. {gonderenisim} {tutar_str}"
-    telegram_gonder(TELEGRAM_CHAT_ID, mesaj)
+    telegram_gonder(grup_id, mesaj)
 
-def onay_sor(islem_id, gonderenisim, tutar_str):
-    mesaj = f"⚠️ <b>Onay Bekliyor</b>\n\n👤 {gonderenisim}\n💰 {tutar_str} TL\n\nOnaylıyor musun?"
+def onay_sor(islem_id, gonderenisim, tutar_str, banka):
+    banka_etiket = banka.upper()
+    mesaj = f"⚠️ <b>Onay Bekliyor</b>\n\n🏦 {banka_etiket}\n👤 {gonderenisim}\n💰 {tutar_str} TL\n\nOnaylıyor musun?"
     butonlar = [[
         {"text": "✅ Onayla", "callback_data": f"onayla_{islem_id}"},
         {"text": "❌ Reddet", "callback_data": f"reddet_{islem_id}"}
@@ -66,26 +92,28 @@ def bildirim():
     duplicate_set.add(h)
 
     gonderenisim, tutar_str, tutar_float = parse_bildirim(metin)
+    banka = banka_tespit(metin)
+    grup_id = BANKA_GRUPLARI.get(banka, VARSAYILAN_GRUP)
     aktif_mod = mod["aktif"]
 
     if aktif_mod == 'manuel':
         islem_id = islem_sayac["num"]
         islem_sayac["num"] += 1
-        islemler[islem_id] = {"gonderenisim": gonderenisim, "tutar_str": tutar_str}
-        onay_sor(islem_id, gonderenisim, tutar_str)
+        islemler[islem_id] = {"gonderenisim": gonderenisim, "tutar_str": tutar_str, "grup_id": grup_id}
+        onay_sor(islem_id, gonderenisim, tutar_str, banka)
         return jsonify({"durum": "onay_bekleniyor"})
 
     elif aktif_mod == 'oto':
         if tutar_float <= 100:
             islem_id = islem_sayac["num"]
             islem_sayac["num"] += 1
-            islemler[islem_id] = {"gonderenisim": gonderenisim, "tutar_str": tutar_str}
-            onay_sor(islem_id, gonderenisim, tutar_str)
+            islemler[islem_id] = {"gonderenisim": gonderenisim, "tutar_str": tutar_str, "grup_id": grup_id}
+            onay_sor(islem_id, gonderenisim, tutar_str, banka)
             return jsonify({"durum": "onay_bekleniyor"})
         else:
             s = sira["num"]
             sira["num"] += 1
-            gruba_gonder(s, gonderenisim, tutar_str)
+            gruba_gonder(s, gonderenisim, tutar_str, grup_id)
             return jsonify({"durum": "ok"})
 
     return jsonify({"durum": "ok"})
@@ -99,13 +127,19 @@ def webhook():
 
         if 'message' in data:
             msg = data['message']
-            if msg['chat']['type'] != 'private':
-                return "ok"
             from_id = msg['from']['id']
-            if from_id != ADMIN_ID:
-                return "ok"
-            text = msg.get('text', '')
             chat_id = msg['chat']['id']
+            text = msg.get('text', '')
+            chat_type = msg['chat']['type']
+
+            # /id komutu her yerden çalışır (grupta da özel mesajda da)
+            if text == '/id':
+                telegram_gonder(chat_id, f"Bu grubun ID'si: <b>{chat_id}</b>")
+                return "ok"
+
+            # Diğer komutlar sadece admin özel mesajından
+            if chat_type != 'private' or from_id != ADMIN_ID:
+                return "ok"
 
             if text == '/oto':
                 mod["aktif"] = "oto"
@@ -137,7 +171,7 @@ def webhook():
                     islem = islemler[islem_id]
                     s = sira["num"]
                     sira["num"] += 1
-                    gruba_gonder(s, islem["gonderenisim"], islem["tutar_str"])
+                    gruba_gonder(s, islem["gonderenisim"], islem["tutar_str"], islem["grup_id"])
                     del islemler[islem_id]
                     telegram_gonder(ADMIN_ID, "✅ Onaylandı ve gruba gönderildi.")
                 else:
@@ -153,7 +187,6 @@ def webhook():
         print(f"Webhook hata: {e}")
 
     return "ok"
-
 
 @app.route('/')
 def index():
