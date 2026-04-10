@@ -154,6 +154,11 @@ def bildirim():
             return jsonify({"durum": "ok", "mesaj": f"{sira}. {gonderenisim} {tutar_str}"})
 
 # --- Callback (Onayla/Reddet butonları) ---
+if 'message' in data:
+    msg = data['message']
+    # Sadece özel mesajları dinle
+    if msg['chat']['type'] != 'private':
+        return "ok"
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
