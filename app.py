@@ -15,7 +15,7 @@ def parse_bildirim(metin):
     """Ziraat bildirim metninden gönderen ve tutarı çeker"""
     
     # Gönderen ismi: "... ECE TEKİN tarafından ..."
-    isim_match = re.search(r'(\w[\w\s]+?)\s+tarafından', metin)
+isim_match = re.search(r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜ\s]+?)\s+tarafından', metin)
     
     # Tutar: "... 100,00 TL ..."
     tutar_match = re.search(r'([\d.,]+)\s*TL', metin)
@@ -46,7 +46,7 @@ def bildirim():
 
     gonderenisim, tutar = parse_bildirim(metin)
 
-    mesaj = f"{sira['num']}. {gonderenisim} — {tutar} TL"
+    mesaj = f"{sira['num']}. {gonderenisim} {tutar}"
     sira['num'] += 1
 
     telegram_gonder(mesaj)
